@@ -2,7 +2,6 @@ import { NextApiRequest, NextApiResponse } from "next";
 import { generateRandomAlphanumeric } from "@/lib/util";
 
 import { AccessToken } from "livekit-server-sdk";
-import { RoomAgentDispatch, RoomConfiguration } from "@livekit/protocol";
 import type { AccessTokenOptions, VideoGrant } from "livekit-server-sdk";
 import { TokenResult } from "../../lib/types";
 
@@ -17,14 +16,14 @@ const createToken = (
   const at = new AccessToken(apiKey, apiSecret, userInfo);
   at.addGrant(grant);
   if (agentName) {
-    at.roomConfig = new RoomConfiguration({
+    (at as any).roomConfig = {
       agents: [
-        new RoomAgentDispatch({
-          agentName: agentName,
-          metadata: '{"user_id": "12345"}',
-        }),
+        {
+          agentName,
+          metadata: '{"user_id":"12345"}',
+        },
       ],
-    });
+    };
   }
   return at.toJwt();
 };
