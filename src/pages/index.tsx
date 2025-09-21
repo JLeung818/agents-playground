@@ -130,6 +130,13 @@ export function HomeInner() {
             }}
           />
         )}
+                {/* VA deployment marker */}
+        <div
+          id="va-marker"
+          className="fixed bottom-2 right-2 z-50 rounded-md bg-white/10 px-2 py-1 text-[11px] font-medium text-white"
+        >
+          VA custom build — hello from your edited page
+        </div>
       </main>
     </>
   );
