@@ -40,11 +40,11 @@ function parseAttributes(input: unknown): Record<string, string> | undefined {
   return undefined;
 }
 
-const createToken = (
+const createToken = async (
   userInfo: AccessTokenOptions,
   grant: VideoGrant,
   agentName?: string,
-) => {
+): Promise<string> => {
   const at = new AccessToken(apiKey, apiSecret, userInfo);
   at.addGrant(grant);
 
@@ -61,7 +61,10 @@ const createToken = (
     };
   }
 
-  return at.toJwt();
+  // Some versions of livekit-server-sdk return a Promise from toJwt()
+  // Normalize to a string using Promise.resolve + await.
+  const jwt = await Promise.resolve((at.toJwt() as unknown) as string | Promise<string>);
+  return jwt as string;
 };
 
 export default async function handleToken(
@@ -114,7 +117,7 @@ export default async function handleToken(
       canUpdateOwnMetadata: true,
     };
 
-    const token = createToken(
+    const token = await createToken(
       { identity, metadata, attributes, name: participantName },
       grant,
       agentName,
