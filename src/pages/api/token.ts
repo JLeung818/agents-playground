@@ -1,12 +1,44 @@
-import { NextApiRequest, NextApiResponse } from "next";
+import type { NextApiRequest, NextApiResponse } from "next";
 import { generateRandomAlphanumeric } from "@/lib/util";
 
 import { AccessToken } from "livekit-server-sdk";
 import type { AccessTokenOptions, VideoGrant } from "livekit-server-sdk";
-import { TokenResult } from "../../lib/types";
+import type { TokenResult } from "../../lib/types";
+
+// IMPORTANT: do NOT import anything from @livekit/protocol here.
+// Vercel can hoist / dedupe deps and cause type mismatches between protocol versions.
 
 const apiKey = process.env.LIVEKIT_API_KEY;
 const apiSecret = process.env.LIVEKIT_API_SECRET;
+
+function parseAttributes(input: unknown): Record<string, string> | undefined {
+  if (!input) return undefined;
+
+  // If it's already an object, coerce string values.
+  if (typeof input === "object" && !Array.isArray(input)) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+      if (v === undefined || v === null) continue;
+      out[k] = String(v);
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  // If it's a string, try JSON.parse; otherwise return undefined.
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parseAttributes(parsed);
+    } catch {
+      // treat as a single attribute blob under "raw"
+      return { raw: trimmed };
+    }
+  }
+
+  return undefined;
+}
 
 const createToken = (
   userInfo: AccessTokenOptions,
@@ -15,16 +47,20 @@ const createToken = (
 ) => {
   const at = new AccessToken(apiKey, apiSecret, userInfo);
   at.addGrant(grant);
+
+  // Avoid RoomConfiguration/RoomAgentDispatch classes to prevent protocol type conflicts on Vercel
   if (agentName) {
     (at as any).roomConfig = {
       agents: [
         {
           agentName,
-          metadata: '{"user_id":"12345"}',
+          // attach any metadata your agent needs
+          metadata: JSON.stringify({ user_id: userInfo.identity }),
         },
       ],
     };
   }
+
   return at.toJwt();
 };
 
@@ -39,7 +75,7 @@ export default async function handleToken(
       return;
     }
     if (!apiKey || !apiSecret) {
-      res.statusMessage = "Environment variables aren't set up correctly";
+      res.statusMessage = "LIVEKIT_API_KEY / LIVEKIT_API_SECRET not configured";
       res.status(500).end();
       return;
     }
@@ -51,27 +87,23 @@ export default async function handleToken(
       metadata: metadataFromBody,
       attributes: attributesFromBody,
       agentName: agentNameFromBody,
-    } = req.body;
+    } = req.body ?? {};
 
-    // Get room name from query params or generate random one
     const roomName =
       (roomNameFromBody as string) ||
       `room-${generateRandomAlphanumeric(4)}-${generateRandomAlphanumeric(4)}`;
 
-    // Get participant name from query params or generate random one
     const identity =
       (participantIdFromBody as string) ||
       `identity-${generateRandomAlphanumeric(4)}`;
 
-    // Get agent name from query params or use none (automatic dispatch)
-    const agentName = (agentNameFromBody as string) || undefined;
+    const participantName =
+      (participantNameFromBody as string) || identity;
 
-    // Get metadata and attributes from query params
-    const metadata = metadataFromBody as string | undefined;
-    const attributesStr = attributesFromBody as string | undefined;
-    const attributes = attributesStr || {};
+    const metadata = (metadataFromBody as string | undefined) ?? undefined;
+    const attributes = parseAttributes(attributesFromBody);
 
-    const participantName = participantNameFromBody || identity;
+    const agentName = (agentNameFromBody as string | undefined) || undefined;
 
     const grant: VideoGrant = {
       room: roomName,
@@ -82,11 +114,12 @@ export default async function handleToken(
       canUpdateOwnMetadata: true,
     };
 
-    const token = await createToken(
+    const token = createToken(
       { identity, metadata, attributes, name: participantName },
       grant,
       agentName,
     );
+
     const result: TokenResult = {
       identity,
       accessToken: token,
