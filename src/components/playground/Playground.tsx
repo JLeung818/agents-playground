@@ -57,6 +57,10 @@ export default function Playground({
   const [transcripts, setTranscripts] = useState<ChatMessageType[]>([]);
   const { localParticipant } = useLocalParticipant();
 
+  // image side panel state
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageData, setImageData] = useState<string | null>(null);
+
   const voiceAssistant = useVoiceAssistant();
 
   const roomState = useConnectionState();
@@ -95,26 +99,58 @@ export default function Playground({
 
   const onDataReceived = useCallback(
     (msg: any) => {
-      if (msg.topic === "transcription") {
-        const decoded = JSON.parse(
-          new TextDecoder("utf-8").decode(msg.payload),
-        );
-        let timestamp = new Date().getTime();
-        if ("timestamp" in decoded && decoded.timestamp > 0) {
-          timestamp = decoded.timestamp;
+      try {
+        // existing transcription handler
+        if (msg.topic === "transcription") {
+          const decoded = JSON.parse(
+            new TextDecoder("utf-8").decode(msg.payload),
+          );
+          let timestamp = Date.now();
+          if ("timestamp" in decoded && decoded.timestamp > 0) {
+            timestamp = decoded.timestamp;
+          }
+          setTranscripts((prev) => [
+            ...prev,
+            {
+              name: "You",
+              message: decoded.text,
+              timestamp,
+              isSelf: true,
+            },
+          ]);
+          return;
         }
-        setTranscripts([
-          ...transcripts,
-          {
-            name: "You",
-            message: decoded.text,
-            timestamp: timestamp,
-            isSelf: true,
-          },
-        ]);
+
+        // visuals: accept JSON { type: "image", url|base64, mime? } or a plain image URL
+        if (msg.topic === "image" || msg.topic === "visuals" || msg.topic === "visual") {
+          const text = new TextDecoder("utf-8").decode(msg.payload);
+          try {
+            const data = JSON.parse(text);
+            if (data?.url) {
+              setImageData(null);
+              setImageUrl(String(data.url));
+              return;
+            }
+            if (data?.base64) {
+              const mime = data?.mime ?? "image/png";
+              setImageUrl(null);
+              setImageData(`data:${mime};base64,${data.base64}`);
+              return;
+            }
+          } catch {
+            // not JSON; treat as URL if it looks like an image
+            if (/^https?:\/\/.+\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(text)) {
+              setImageData(null);
+              setImageUrl(text);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[playground] datachannel parse error", err);
       }
     },
-    [transcripts],
+    [setTranscripts],
   );
 
   useDataChannel(onDataReceived);
@@ -228,6 +264,30 @@ export default function Playground({
     voiceAssistant.audioTrack,
     voiceAssistant.agent,
   ]);
+
+  const visualsContent = useMemo(() => {
+    return (
+      <div className="flex items-start justify-center w-full h-full overflow-auto">
+        {imageUrl && (
+          <img
+            src={imageUrl}
+            alt="visual"
+            className="w-full h-auto rounded-sm border border-gray-800"
+          />
+        )}
+        {!imageUrl && imageData && (
+          <img
+            src={imageData}
+            alt="visual"
+            className="w-full h-auto rounded-sm border border-gray-800"
+          />
+        )}
+        {!imageUrl && !imageData && (
+          <div className="text-gray-600 text-sm">No image yet.</div>
+        )}
+      </div>
+    );
+  }, [imageUrl, imageData]);
 
   const handleRpcCall = useCallback(async () => {
     if (!voiceAssistant.agent || !room) {
@@ -537,6 +597,18 @@ export default function Playground({
   }
 
   mobileTabs.push({
+    title: "Visuals",
+    content: (
+      <PlaygroundTile
+        className="w-full h-full grow"
+        childrenClassName="justify-center"
+      >
+        {visualsContent}
+      </PlaygroundTile>
+    ),
+  });
+
+  mobileTabs.push({
     title: "Settings",
     content: (
       <PlaygroundTile
@@ -609,6 +681,12 @@ export default function Playground({
             {chatTileContent}
           </PlaygroundTile>
         )}
+        <PlaygroundTile
+          title="Visuals"
+          className="h-full grow basis-1/4 hidden lg:flex"
+        >
+          {visualsContent}
+        </PlaygroundTile>
         <PlaygroundTile
           padding={false}
           backgroundColor="gray-950"
