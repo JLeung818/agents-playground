@@ -7,7 +7,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { Inter } from "next/font/google";
 import Head from "next/head";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PlaygroundConnect } from "@/components/PlaygroundConnect";
 import Playground from "@/components/playground/Playground";
@@ -18,10 +18,8 @@ import {
   ConnectionProvider,
   useConnection,
 } from "@/hooks/useConnection";
-import { useMemo } from "react";
 import { ToastProvider, useToast } from "@/components/toast/ToasterProvider";
-
-import { useCallback, useEffect, useState } from "react"; // ⬅️ add useEffect
+import { RoomEvent } from "livekit-client";
 
 const themeColors = [
   "cyan",
@@ -65,9 +63,15 @@ function ImageStream() {
       }
     };
 
-    room.on("dataReceived", handler);
+    // room.on("dataReceived", handler);
+    // return () => {
+    //   room.off("dataReceived", handler);
+    // };
+    console.log("[ImageStream] attaching RoomEvent.DataReceived listener");
+     room.on(RoomEvent.DataReceived, handler);
     return () => {
-      room.off("dataReceived", handler);
+      console.log("[ImageStream] detaching RoomEvent.DataReceived listener");
+      room.off(RoomEvent.DataReceived, handler);
     };
   }, [room]);
 
@@ -88,6 +92,127 @@ function ImageStream() {
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function DataLinkListener() {
+  const room = useRoomContext();
+  const [link, setLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!room) return;
+
+    const onData = (
+      payload: Uint8Array,
+      _participant: any,
+      _kind: any,
+      topic?: string,
+    ) => {
+      // Only handle our chat topic
+      if (topic && topic !== "chat") return;
+
+      try {
+        const text = new TextDecoder().decode(payload);
+        let obj: any;
+        try {
+          obj = JSON.parse(text);
+        } catch {
+          obj = { text };
+        }
+
+        const raw: string = typeof obj?.text === "string" ? obj.text : text;
+
+        // Find the first URL in the text (don't depend on a specific phrase)
+        const m = raw.match(/https?:\/\/\S+/i);
+        if (m) {
+          // Trim trailing punctuation like ")" or "]" if present
+          const url = m[0].replace(/[)>\]]+$/, "");
+          console.log("[link] got URL via data channel:", url);
+
+          // Best-effort: try to open a new tab
+          // try {
+          //   window.open(url, "_blank", "noopener,noreferrer");
+          //   console.log("[DataLinkListener] Open button clicked:", link);
+          // } catch {
+          //   /* popup might be blocked */
+          // }
+
+          try {
+            window.open(url, "_blank", "noopener,noreferrer");
+           console.log("[DataLinkListener] attempted auto-open:", url);
+          } catch {
+             /* popup might be blocked */
+           }
+
+          // Always show a banner so user can click if popups are blocked
+          // setLink(url);
+          // console.log("[DataLinkListener] URL detected:", url);
+          setLink(url);
+          console.log("[DataLinkListener] URL detected, showing banner:", url);
+        }
+      } catch (e) {
+        console.warn("[link] onData error:", e);
+      }
+    };
+
+    // room.on("dataReceived", onData);
+    // return () => room.off("dataReceived", onData);
+    console.log("[DataLinkListener] attaching RoomEvent.DataReceived listener");
+    room.on(RoomEvent.DataReceived, onData);
+    return () => {
+      console.log("[DataLinkListener] detaching RoomEvent.DataReceived listener");
+      room.off(RoomEvent.DataReceived, onData);
+    };
+  }, [room]);
+
+  if (!link) return null;
+
+  return (
+    <div
+      id="images-link-banner"
+      className="fixed bottom-4 left-4 right-4 z-50 flex items-center justify-between gap-3 rounded-md bg-black/85 px-3 py-2 text-white"
+    >
+      <span className="truncate">
+        Images link ready:{" "}
+        <a className="underline" href={link} target="_blank" rel="noopener noreferrer">
+          {link}
+        </a>
+      </span>
+      <div className="flex gap-2 shrink-0">
+        {/* <button
+          onClick={() => window.open(link, "_blank", "noopener,noreferrer")} */}
+          <button
+          onClick={() => {
+            console.log("[DataLinkListener] Open button clicked:", link);
+            window.open(link!, "_blank", "noopener,noreferrer");
+          }}
+          className="rounded bg-white/10 px-3 py-1 hover:bg-white/20"
+        >
+          Open
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              if ((window as any).isSecureContext && navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(link);
+                console.log("[link] copied:", link);
+              }
+            } catch {
+              /* ignore clipboard errors */
+            }
+          }}
+          className="rounded bg-white/10 px-3 py-1 hover:bg-white/20"
+        >
+          Copy
+        </button>
+        <button
+          onClick={() => setLink(null)}
+          className="rounded bg-white/10 px-3 py-1 hover:bg-white/20"
+        >
+          Dismiss
+        </button>
       </div>
     </div>
   );
@@ -182,6 +307,9 @@ export function HomeInner() {
 
           {/* Renders images sent by the agent via data channel */}
           <ImageStream />
+
+          {/* Opens Google Images links sent by the agent */}
+          <DataLinkListener />
 
           <RoomAudioRenderer />
           <StartAudio label="Click to enable audio playback" />
